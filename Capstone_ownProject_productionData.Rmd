@@ -1,0 +1,465 @@
+---
+title: "Capstone - own Project - Production Data with Quality Outcome Prediction"
+output: pdf_document
+---
+
+```{r global_options, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+## Section 1
+
+### Introduction:
+This R project demontrates a prediction a two-class qualilty outcome (pass/fail) through machine learning training.
+Datasource are the raw process data from a production line. Only the feature names (column headers) have been given generic name for publication.
+As algorithm to train models, the XGB - Algorithm will be used.
+As validation of the models performance, the MCC (Matthews correlation coefficient) is used.
+Note: Any code provided is based on R v3.6.1
+
+```{r load_required_packages, message=FALSE, warning=FALSE, include=TRUE, results='hide'}
+# Install packages
+# Note: this process could take a couple of minutes
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(Matrix)) install.packages("Matrix", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(xgboost)) install.packages("xgboost", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(dslabs)) install.packages("dslabs", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(reshape2)) install.packages("reshape2", repos = "http://cran.us.r-project.org")
+if(!require(Hmisc)) install.packages("Hmisc", repos = "http://cran.us.r-project.org")
+if(!require(rstudioapi)) install.packages("rstudioapi", repos = "http://cran.us.r-project.org")
+if(!require(corrplot)) install.packages("corrplot", repos = "http://cran.us.r-project.org")
+if(!require(Brobdingnag)) install.packages("Brobdingnag", repos = "http://cran.us.r-project.org")
+if(!require(parallel)) install.packages("parallel", repos = "http://cran.us.r-project.org")
+if(!require(doParallel)) install.packages("doParallel", repos = "http://cran.us.r-project.org")
+if(!require(skimr)) install.packages("skimr", repos = "http://cran.us.r-project.org")
+if(!require(tictoc)) install.packages("tictoc", repos = "http://cran.us.r-project.org")
+
+# Load libraries
+library(rstudioapi)
+library(data.table)
+library(Matrix)
+library(caret)
+library(xgboost)
+library(dslabs)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+library(Hmisc)
+library(corrplot)
+library(Brobdingnag)
+library(parallel)
+library(doParallel)
+library(skimr)
+library(tictoc)
+```
+At this point we have installed all the necessarry packages and are ready to go.
+
+### Loading data
+Now we load the original dataset and take a quick look at it to get an idea of the data structure.
+(Due to amount of data we will load the validation data later, when we need them, since memory might be issue.)
+```{r loading_data, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+tic("loading training data") # set timer for data loading in total
+tic("downloading data") # set timer for download
+
+dl <- tempfile()
+download.file("https://storagemalteenterprise.blob.core.windows.net/processdata/process_data.zip", dl)
+toc() # end timer for download
+
+# Load train data from csv file into dataframe
+data_train <- fread(unzip(dl, "process_data_train.csv"), header = TRUE, showProgress = F)
+toc() # end timer for loading training data total
+```
+
+## Section 2
+
+### Overview Dataset:
+Let's check the data we are dealing with and get an idea of the basic data structure.
+```{r data_dimensions, eval=TRUE, echo=TRUE}
+dim(data_train)
+```
+We see that out training data include 787969 rows and 970 colums. That's a lot of data.
+So printing the structure & summary of all columns obviously makes no sense here.
+For the sake of demonstration, we print an extract, which includes the Id, the first 3 features and the Response:
+```{r data_structure, eval=TRUE, echo=TRUE}
+str(data_train[, c(1, 2:4, 970)])
+```
+So we see, that the features are numeric values (like all the features we have, 968 total) and the Response is also given as numeric value.
+The Response can be 0 or 1, where 0 means a positiv result (0=pass) and 1 means a negativ result (1=fail). It can be interpreted as a two-level factor.
+Let' look at a short summary for the same columns:
+```{r data_summary, eval=TRUE, echo=TRUE}
+summary(data_train[, c(1, 2:4, 970)])
+```
+The mean from the Response is quite low, indicating that there are way more pass observations than fail observations in the dataset.
+
+```{r ratings_plot, eval=TRUE, echo=TRUE}
+# plot of the quality observations
+data.frame(as.factor(data_train$Response)) %>%
+   group_by(as.factor.data_train.Response.) %>%
+   summarise(cnt = n()) %>%
+   ggplot(aes(x= (as.factor.data_train.Response.), y=cnt)) +
+   geom_bar(stat = "identity") +
+   geom_text(aes(label=cnt),position=position_dodge(width=0.9), vjust=-0.25) +
+   labs(x="Quality Outcome", y="Number Of Observations", caption = "source data: data_train set") +
+   ggtitle("Number Of Quality Observations")
+
+# ratio of "fail" observations
+sum(data_train$Response)/nrow(data_train)
+```
+There are only 4502 fail observations, which results in a ratio of 0.571% of the data. Aparently, our production line runs ok and produces not that much scrap. That's good :)
+
+In addition we see from the summary that the feature columns have missing values, Id and Response have not. In fact, there are a lot of missing values in the dataset.
+Let's examine the missing values more closely:
+Which features have missing values?
+How many?
+```{r missingValues_plot, eval=TRUE, echo=TRUE}
+# count NA's per feature column
+missingCount <- sapply(data_train, function(x) sum(is.na(x)))
+# convert to dataframe
+missingCount <- data.frame(missingCount)
+# add feature names
+missingCount$name <- rownames(missingCount)          
+# order descending (most NA's on top)
+missingCount <- missingCount[order(missingCount$missingCount),]
+# check which have no missing values
+subset(missingCount, missingCount == 0)
+# remove ID + Response columns, onyl keep all features
+missingCount <- subset(missingCount, missingCount > 0) 
+# add ratio column
+missingCount["missingRatio"] <- missingCount$missingCount / nrow(data_train)
+# check if there is feature that has no values at all
+max(missingCount$missingRatio)
+
+ggplot(missingCount, aes(x=missingRatio)) +
+ geom_histogram(bins=50) +
+ ggtitle("Histogram: Missing Ratio of Features") +
+ labs(x="Missing Ratio", y="Variables", caption = "source data: data_train set")
+```
+Since we have so many features, we cannot plot them idividually. So we have the 50 category bins.
+We see that most features have a  missing values ratio of >90%, some even 99%, but none is always missing.
+
+It will be interesting to see if we have enough information in the data in general, so that a ML algorithm can learn and predict the Response.
+Also this raises the question, which features should use to train our model?
+We can't just use all data (too much, it breaks my laptop and takes forever), so we have to decide on a subset of features. But which are the important ones?
+
+### Manual Feature Analysis
+#### Correlation Analyis
+To decide, which feature is more important than others. We can start looking at the correlation of features with the Response.
+The stronger the correlation, the more interesting the feature is.
+
+! NOTE: since we have some many feaures, I will demonstrate the method/process of doing manual feature correlation analysis only with a small selection of the first 20 features !
+```{r data_correlation, eval=TRUE, echo=TRUE}
+dt_selectedFeatures <- data_train[, 2:21] # not select the 1st column because thats "Id"
+skim(dt_selectedFeatures)[, c(1:6, 12)] # get quick overview of features
+```
+Ok, we have our small subset of data.
+Let's calculate the correlation of each features with the Response.
+Since the function does not work with NA's, they must be replaced.
+We replace them with the columns mean, so that the new values we impute do not influence the correlation.
+```{r replace_NAs, eval=TRUE, echo=TRUE}
+# function to replace NA's with column mean value
+func_NA2mean <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
+# do the replacement
+dt_selectedFeatures <- replace(dt_selectedFeatures, TRUE, lapply(dt_selectedFeatures, func_NA2mean)) 
+anyNA(dt_selectedFeatures) # check if any NA is left
+```
+Now, there are no NA's left in the dataset and we can calculate the correlation and plot the results:
+```{r calc_correlation, eval=TRUE, echo=TRUE}
+dt_corr <- data.frame(names(dt_selectedFeatures), sapply(dt_selectedFeatures, function(x) { cor(x, data_train$Response) }))
+names(dt_corr) <- c("variableName", "correlationValue")
+rownames(dt_corr) <- seq(1,20)
+
+ggplot(data = dt_corr, aes(x = reorder(variableName, correlationValue), y = correlationValue)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  coord_flip() +
+  ggtitle("Barplot: Correlation of selected features with Quality Outcome") +
+  labs(x="Featurename", y="Correlation Value", caption = "source data: dt_corr")
+```
+We see that the features have different correlations with the Response. Some are positiv correlated, some negativ.
+
+So should we just calculate the correlation of all the features in the data set and take those wiht the highest absolut values?
+Unfortunately, the correlation alone is not sufficient to decide.
+We also should look at the inter-correlation between features, because taking two features which are highly correlation with each other might not yield any additional prediction power but only increases the noise in the data compared to only taking one of them.
+The inter-correlation can be analysed like so:
+```{r inter_correlation, eval=TRUE, echo=TRUE}
+correlationMatrix <- rcorr(as.matrix(dt_selectedFeatures), type= c("pearson"))
+corrplot(correlationMatrix$r, type="upper", order="hclust",
+         p.mat = correlationMatrix$P, sig.level = 0.01, insig = "blank", # Insignificant correlations are left blank
+         tl.cex = 0.7, tl.col = "black")
+```
+Here we see that inter-correlation between some features exists.
+For example, are L0_S0_F20 and L0_S0_F22 highly positivly correlated, and L0_S0_F2 and L0_S0_F14 have high negativ correlation.
+
+So far with this correlation example. As we see, this visual analysis is not appropriate to do for 900+ features.
+
+#### Desciptive Statistics (with Caret package)
+Another method do decide on features to use for training could be using descriptive statistics. Again, this would be done for each feature individually, so for demonstration we will use our 20-feature subset again.
+For the following we preprocess the data a little more:
+- We do some tranformation of the data so that the values get centered (substract mean) & scaled (devided by standard deviation)
+- Finally removing features with nearZeroVariance, since we dont need features that provide (nearly) no prediction potential
+      and removing features that have high inter-correlation to other features.
+
+```{r data_prep, eval=TRUE, echo=TRUE}
+dt_selectedFeatures_preprocessed <- dt_selectedFeatures # make copy of dataset to work with
+# create tranformation model for centering & scaling
+preProcess_transformValues_model <- preProcess(dt_selectedFeatures_preprocessed, method = c("center", "scale"), na.remove = T)      
+dt_selectedFeatures_preprocessed <- predict(preProcess_transformValues_model, newdata = dt_selectedFeatures_preprocessed)  # center values
+# Remove features with nearZeroVariance
+nzv <- nearZeroVar(dt_selectedFeatures_preprocessed)
+dt_selectedFeatures_preprocessed_cleaned <- dt_selectedFeatures_preprocessed[, -..nzv]
+# Remove features with high inter-correlation
+corr_mat <- cor(dt_selectedFeatures_preprocessed_cleaned)
+too_high <- findCorrelation(corr_mat, cutoff = .9)
+dt_selectedFeatures_preprocessed_cleaned <- dt_selectedFeatures_preprocessed_cleaned[, -..too_high]
+skim(dt_selectedFeatures_preprocessed_cleaned)[, c(1:6, 12)] # check remaining features
+```      
+We see that there are only 7 of 20 features left. The others were removed becaues of nearly no variance or high inter-correlation with others.
+Now we can use the mean and/or density plot to decide, if any of the remaining feature seems interesting to us.
+Those with distinctive curves are the first to take into further investigation.
+```{r feature_plots, eval=TRUE, echo=TRUE}
+# Plotting the remaining features. !!! Creating these plots takes some time !!!
+# Feature importance analysis by mean
+featurePlot(x = dt_selectedFeatures_preprocessed_cleaned,
+                                y = as.factor(data_train$Response),
+                                plot = "box",
+                                strip=strip.custom(par.strip.text=list(cex=.7)),
+                                scales = list(x = list(relation="free"),
+                                              y = list(relation="free")),
+                                pch='.')
+# Feature importance analysis by density
+featurePlot(x = dt_selectedFeatures_preprocessed_cleaned,
+                                   y = as.factor(data_train$Response),
+                                   plot = "density",
+                                   strip=strip.custom(par.strip.text=list(cex=.7)),
+                                   scales = list(x = list(relation="free"),
+                                                 y = list(relation="free")),
+                                   pch='.')
+``` 
+
+But again. As we see, analysing 900+ features like this would be very time consuming and error prone due to human mistakes.
+
+#### Automatic feature selection
+Fortunately we can use ML algorithms to decide on importance features for us.
+Let do it this way.
+Therefore we train models on a smaller portion of the training dataset (of all features). This subset should be kind of representative of the complete dataset.
+Then we just check which features the model uses.
+NOTE: I will only use the XGB algorithm here. Comparing multiple algorithms took too long. 
+Why the XBG ->https://towardsdatascience.com/https-medium-com-vishalmorde-xgboost-algorithm-long-she-may-rein-edd9f99be63d
+
+```{r auto_feature_selection, eval=TRUE, echo=TRUE}
+# We use a subset of 200.000 rows (observations) from the data_train set to train the feature-selection models
+X_train_selection <- data_train[1:200000,-c("Id", "Response")]
+X_train_selection[is.na(X_train_selection)] <- 0
+# For classification, Response must be provided as factors
+Y_train_selection <- as.factor(data_train$Response[1:200000])
+levels(Y_train_selection)[levels(Y_train_selection)==0] <- "good"
+levels(Y_train_selection)[levels(Y_train_selection)==1] <- "fail"
+
+#models <- c("glm", "svmLinear", "naive_bayes", "gamLoess", "multinom", "rf", "adaboost", "xgbTree")
+models <- c("xgbTree")
+fitControl <- trainControl(
+  allowParallel = F,            # make use of multiple cpu cores
+  verboseIter = F)              # give verbose info
+
+# set up hyper-parameter search, in this case: reduce all parameter to one value, so no hyper-parameter search is done -> takes too long (but works!)
+xgb_grid = expand.grid(
+  nrounds = 20,
+  eta = c(0.01),               # default 0.3
+  max_depth = c(7),            # default 6
+  gamma = 0,                   # default 0
+  subsample = c(0.5), 
+  colsample_bytree = c(0.5),
+  min_child_weight = seq(1)
+)
+
+tic("training time for feature-selection model")    # set timer for training process of feature-selection model
+featureSelection_models <- lapply(models, function(model){
+  print(model)
+  ## prepare parallel computing
+  #cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+  #registerDoParallel(cluster)
+  model <- train(
+    x = X_train_selection,
+    y = Y_train_selection,
+    method = model,
+    trControl = fitControl,
+    tuneGrid = xgb_grid
+  )
+  ## end parallel computing
+  #stopCluster(cluster)
+  #rm(cluster)
+  #gc()
+  return (model)
+})
+toc() # end timer for training process of feature-selection model
+names(featureSelection_models) <- models
+
+# Getting features from feature-selection model
+imp <- xgb.importance(model = featureSelection_models$xgbTree$finalModel, feature_names = colnames(X_train_selection))
+head(imp, 10)
+featureList <- imp$Feature
+length(featureList)
+``` 
+
+Here we have our features too use!
+The selection model uses 153 features. Of this way we dont know exactly HOW the models decided this.
+
+``` {r memory_clean_up, eval=TRUE, echo=FALSE}
+rm(corr_mat, correlationMatrix, dt_corr, dt_selectedFeatures, dt_selectedFeatures_preprocessed, dt_selectedFeatures_preprocessed_cleaned, imp, missingCount, X_train_selection, Y_train_selection, func_NA2mean)
+gc()
+``` 
+
+### Training Method
+Sinc we now have our features, all whats left is take train our final prediction model!
+Again, we use the XGB algorithm.
+Since we have classical classification problem at hand, we train the model for classification.
+```{r classification_modl, eval=TRUE, echo=TRUE}
+X_train_final <- data_train %>% select(one_of(featureList))
+Y_train_final_numeric <- data_train$Response
+
+# Preprocess data
+X_train_final[is.na(X_train_final)] <- 0
+Y_train_final_factor <- as.factor(Y_train_final_numeric)
+levels(Y_train_final_factor)[levels(Y_train_final_factor)==0] <- "good"
+levels(Y_train_final_factor)[levels(Y_train_final_factor)==1] <- "fail"
+
+tic("training time for  final classification model")    # set timer for training process of  final classification model
+prediction_model_classification <- train(
+  x = X_train_final,
+  y = Y_train_final_factor,
+  method = "xgbTree",
+  trControl = fitControl,
+  tuneGrid = xgb_grid
+)
+toc() # end timer for training process of  final classification model
+``` 
+
+But the XGB can do both , calssifcation and regression. So lets test how that compares.
+```{r regression_model, eval=TRUE, echo=TRUE, warning=FALSE}
+# Training model for regression: This time the model will predict numeric values. (~ range 0,1)
+# We will determine a cutoff and treat all values above that cutoff as 1=fail, all other values as 0=good
+tic("training time for final regression model")    # set timer for training process of final regression model
+prediction_model_regression <- train(
+  x = X_train_final,
+  y = Y_train_final_numeric,
+  method = "xgbTree",
+  trControl = fitControl,
+  tuneGrid = xgb_grid
+)
+toc() # end timer for training process of  final regression model
+``` 
+
+## Section 3
+```{r results, eval=TRUE, echo=TRUE}
+### Results
+# Assessment of the performance of all build models via the MCC
+
+### Target Function
+# Define target function, to assess algorithm performance: Matthews correlation coefficient (MCC)
+# (see https://en.wikipedia.org/wiki/Matthews_correlation_coefficient)
+# The coefficient takes into account true and false positives and negatives and return a value between -1 and 1.
+# mcc base function
+mcc <- function(TP, FP, FN, TN)
+{
+  num <- (TP*TN) - (FP*FN)
+  # using brob neccessary to avoid error "NAs produced by integer overflow"
+  den <- as.brob(TP+FP)*(TP+FN)*(TN+FP)*(TN+FN)
+  
+  if (den == 0)
+  {
+    return(as.numeric(0)) # return 0 per defintion if devided by 0
+  }else
+  {
+    return(as.numeric(num / sqrt(den)))
+  }
+}
+# mcc wrapper function to call with outcomes
+calc_mcc <- function(truth, prediction){
+  mcc_factors_table <- table(Truth = truth, Prediction = prediction)
+  # catch error if factor-level was never predicted/appeard and return 0
+  tp <- tryCatch({mcc_factors_table[1,1]}, error = function(e){0})
+  fp <- tryCatch({mcc_factors_table[2,1]}, error = function(e){0})
+  fn <- tryCatch({mcc_factors_table[1,2]}, error = function(e){0})
+  tn <- tryCatch({mcc_factors_table[2,2]}, error = function(e){0})
+  mcc(tp, fp, fn, tn)
+}
+
+#########################################
+# Load validation data from csv file into dataframe
+data_val <- fread(unzip(dl, "process_data_val.csv"), header = TRUE, showProgress = F)
+# Preparing validation data
+X_val <- data_val[,-c("Id", "Response")]
+Y_val_numeric <- data_val$Response
+rm(data_val)
+gc()
+Sys.sleep(1)
+
+## Guessing MCC
+# What is the MCC by guessing the Response? - repeating the process 100 times and taking the mean as result
+set.seed(1, sample.kind = "Rounding")    # if using R 3.6 or later
+guessing_results <- function(){
+  y_hat <- sample(c(0, 1), nrow(data_val), replace = TRUE)
+  y_hat
+  calc_mcc(data_val$Response, y_hat)
+}
+mcc_guessing <- mean(replicate(n = 100, expr = guessing_results()))
+names(mcc_guessing) <- "MCC Guessing"
+mcc_guessing
+rm(guessing_results)
+
+# For comparison, also check MCC of intermediate model for featureSelection
+
+# Preprocess validation data
+X_val[is.na(X_val)] <- 0
+Y_val_factor <- as.factor(Y_val_numeric)
+levels(Y_val_factor)[levels(Y_val_factor)==0] <- "good"
+levels(Y_val_factor)[levels(Y_val_factor)==1] <- "fail"
+
+mcc_featureSelection_model <- sapply(featureSelection_models, function(model){
+  pred <- predict(model, newdata = X_val)
+  return(calc_mcc(truth = Y_val, prediction = pred))
+})
+names(mcc_featureSelection_model) <- "MCC featureSelection classification"
+# MCC with featureSelection Model
+mcc_featureSelection_model
+
+## final classificaton model
+X_val <- X_val %>% select(one_of(featureList))       # Prepare validation data
+pred_final_classificaton <- predict(prediction_model_classification, newdata = X_val)      # predict outcome
+table(Truth = Y_val, Prediction = pred_final_classificaton)                                      # print table
+mcc_predictionModel_classification <- calc_mcc(truth = Y_val, prediction = pred_final_classificaton)    # calculate MCC
+names(mcc_predictionModel_classification) <- "MCC finalModel classification"
+# MCC for final model trained for classification
+mcc_predictionModel_classification
+
+## finalregression model
+pred_final_regression <- predict(prediction_model_regression, newdata = X_val)
+
+# determine cutoff
+matt <- data.table(quant = seq(0.7, 1, by = 0.1))
+matt$mcc <- sapply(matt$quant, FUN =
+                     function(x) {
+                       calc_mcc(Y_val_numeric, (pred_final_regression > quantile(pred_final_regression, x)) * 1)})
+print(matt)
+best <- matt[which(matt$mcc == max(matt$mcc))][1]
+best$cutoff <- quantile(pred_final_regression, best$quant)
+best
+# MCC for final model trained for classification
+mcc_predictionModel_regression <- best$scores
+names(mcc_predictionModel_regression) <- "MCC finalModel regression"
+
+## Overall results summary
+results <- list(mcc_guessing, mcc_featureSelection_model, mcc_predictionModel_classification, mcc_predictionModel_regression)
+knitr::kable(results, caption = "Summary of all predictions (all models used XGB algorithm") 
+```
+We see that all the models actualy learned something and performed ways better than guessing.
+
+## Section 4
+# Further improvements
+Of course the performance could be improved by do some hyper-parameter optimisation, using more data etc.
+Also we could try doing better preprocessing, or optimse bootstrapping or cross-fold validation.
+But we were able to demonstrate that we can predict values.
+Even with many NA's in the raw data!
