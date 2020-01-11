@@ -351,7 +351,11 @@ prediction_model_regression <- train(
 )
 toc() # end timer for training process of  final regression model
 ``` 
-
+Now we have 2 models trained on the important features with XGB. Now let's try to predict the Response on a separat validation set.
+``` {r memory_clean_up2, eval=TRUE, echo=FALSE}
+rm(X_train_final, fitControl, xgb_grid, Y_train_final_numeric, Y_train_final_factor)
+gc()
+```
 ## Section 3
 ```{r results, eval=TRUE, echo=TRUE}
 ### Results
