@@ -267,9 +267,9 @@ prediction_model_classification <- train(
 toc() # end timer for training process of  final classification model
 
 #################################
-# Training final regression prediction model
-# Training model for regression: This time the model will predict numeric values. (~ range 0,1)
-# We will determine a cutoff and treat all values above that cutoff as 1=fail, all other values as 0=good
+# # Training final regression prediction model
+# # Training model for regression: This time the model will predict numeric values. (~ range 0,1)
+# # We will determine a cutoff and treat all values above that cutoff as 1=fail, all other values as 0=good
 tic("training time for final regression model")    # set timer for training process of final regression model
 prediction_model_regression <- train(
   x = X_train_final,
@@ -352,7 +352,7 @@ names(mcc_featureSelection_model) <- "MCC featureSelection classification"
 # MCC with featureSelection Model
 mcc_featureSelection_model
 
-rm(featureSelection_model, imp)
+rm(featureSelection_models, imp)
 gc()
 Sys.sleep(5)
 
@@ -386,6 +386,6 @@ mcc_predictionModel_regression <- best$scores
 names(mcc_predictionModel_regression) <- "MCC finalModel regression"
 
 ## Overall results summary
-results <- list(mcc_guessing, mcc_featureSelection_model, mcc_predictionModel_classification, mcc_predictionModel_regression)
+results <- list(mcc_guessing, mcc_featureSelection_model, mcc_predictionModel_classification,mcc_predictionModel_regression)
 results
 # knitr::kable(results, caption = "Summary of all predictions (all models used XGB algorithm") 

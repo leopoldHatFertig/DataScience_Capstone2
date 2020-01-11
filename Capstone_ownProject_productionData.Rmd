@@ -185,9 +185,10 @@ Unfortunately, the correlation alone is not sufficient to decide.
 We also should look at the inter-correlation between features, because taking two features which are highly correlation with each other might not yield any additional prediction power but only increases the noise in the data compared to only taking one of them.
 The inter-correlation can be analysed like so:
 ```{r inter_correlation, eval=TRUE, echo=TRUE}
+# Insignificant correlations are left blank
 correlationMatrix <- rcorr(as.matrix(dt_selectedFeatures), type= c("pearson"))
 corrplot(correlationMatrix$r, type="upper", order="hclust",
-         p.mat = correlationMatrix$P, sig.level = 0.01, insig = "blank", # Insignificant correlations are left blank
+         p.mat = correlationMatrix$P, sig.level = 0.01, insig = "blank",
          tl.cex = 0.7, tl.col = "black")
 ```
 Here we see that inter-correlation between some features exists.
@@ -308,7 +309,7 @@ Here we have our features too use!
 The selection model uses 153 features. Of this way we dont know exactly HOW the models decided this.
 
 ``` {r memory_clean_up, eval=TRUE, echo=FALSE}
-rm(corr_mat, correlationMatrix, dt_corr, dt_selectedFeatures, dt_selectedFeatures_preprocessed, dt_selectedFeatures_preprocessed_cleaned, imp, missingCount, X_train_selection, Y_train_selection, func_NA2mean)
+rm(corr_mat, correlationMatrix, dt_corr, dt_selectedFeatures, dt_selectedFeatures_preprocessed, dt_selectedFeatures_preprocessed_cleaned, imp, missingCount, X_train_selection, Y_train_selection, func_NA2mean, nzv, too_high, models, preProcess_transformValues_model)
 gc()
 ``` 
 
@@ -316,9 +317,12 @@ gc()
 Sinc we now have our features, all whats left is take train our final prediction model!
 Again, we use the XGB algorithm.
 Since we have classical classification problem at hand, we train the model for classification.
-```{r classification_modl, eval=TRUE, echo=TRUE}
+```{r classification_model, eval=TRUE, echo=TRUE}
 X_train_final <- data_train %>% select(one_of(featureList))
 Y_train_final_numeric <- data_train$Response
+
+rm(data_train)
+gc()
 
 # Preprocess data
 X_train_final[is.na(X_train_final)] <- 0
@@ -337,8 +341,8 @@ prediction_model_classification <- train(
 toc() # end timer for training process of  final classification model
 ``` 
 
-But the XGB can do both , calssifcation and regression. So lets test how that compares.
-```{r regression_model, eval=TRUE, echo=TRUE, warning=FALSE}
+But the XGB can do both , classifcation and regression. So lets test how that compares.
+```{r regression_model, eval=FALSE, echo=TRUE, warning=FALSE}
 # Training model for regression: This time the model will predict numeric values. (~ range 0,1)
 # We will determine a cutoff and treat all values above that cutoff as 1=fail, all other values as 0=good
 tic("training time for final regression model")    # set timer for training process of final regression model
@@ -351,11 +355,12 @@ prediction_model_regression <- train(
 )
 toc() # end timer for training process of  final regression model
 ``` 
-Now we have 2 models trained on the important features with XGB. Now let's try to predict the Response on a separat validation set.
+
 ``` {r memory_clean_up2, eval=TRUE, echo=FALSE}
 rm(X_train_final, fitControl, xgb_grid, Y_train_final_numeric, Y_train_final_factor)
 gc()
-```
+``` 
+
 ## Section 3
 ```{r results, eval=TRUE, echo=TRUE}
 ### Results
@@ -399,7 +404,7 @@ X_val <- data_val[,-c("Id", "Response")]
 Y_val_numeric <- data_val$Response
 rm(data_val)
 gc()
-Sys.sleep(1)
+Sys.sleep(3)
 
 ## Guessing MCC
 # What is the MCC by guessing the Response? - repeating the process 100 times and taking the mean as result
