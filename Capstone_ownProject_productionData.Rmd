@@ -401,7 +401,7 @@ Sys.sleep(1)
 # What is the MCC by guessing the Response? - repeating the process 100 times and taking the mean as result
 set.seed(1, sample.kind = "Rounding")    # if using R 3.6 or later
 guessing_results <- function(){
-  y_hat <- sample(c(0, 1), nrow(Y_val_numeric), replace = TRUE)
+  y_hat <- sample(c(0, 1), nrow(X_val), replace = TRUE)
   y_hat
   calc_mcc(Y_val_numeric, y_hat)
 }
