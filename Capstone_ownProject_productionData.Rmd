@@ -403,7 +403,7 @@ set.seed(1, sample.kind = "Rounding")    # if using R 3.6 or later
 guessing_results <- function(){
   y_hat <- sample(c(0, 1), nrow(data_val), replace = TRUE)
   y_hat
-  calc_mcc(data_val$Response, y_hat)
+  calc_mcc(Y_val_numeric, y_hat)
 }
 mcc_guessing <- mean(replicate(n = 100, expr = guessing_results()))
 names(mcc_guessing) <- "MCC Guessing"
