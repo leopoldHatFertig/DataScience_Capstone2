@@ -1,3 +1,6 @@
+############
+#Github: https://github.com/leopoldHatFertig/DataScience_Capstone_OwnProject
+###########
 # Install packages
 # Note: this process could take a couple of minutes
 
@@ -346,7 +349,7 @@ levels(Y_val_factor)[levels(Y_val_factor)==1] <- "fail"
 
 mcc_featureSelection_model <- sapply(featureSelection_models, function(model){
   pred <- predict(model, newdata = X_val)
-  return(calc_mcc(truth = Y_val, prediction = pred))
+  return(calc_mcc(truth = Y_val_factor, prediction = pred))
 })
 names(mcc_featureSelection_model) <- "MCC featureSelection classification"
 # MCC with featureSelection Model
@@ -359,8 +362,8 @@ Sys.sleep(5)
 ## final classificaton model
 X_val <- X_val %>% select(one_of(featureList))       # Prepare validation data
 pred_final_classificaton <- predict(prediction_model_classification, newdata = X_val)      # predict outcome
-table(Truth = Y_val, Prediction = pred_final_classificaton)                                      # print table
-mcc_predictionModel_classification <- calc_mcc(truth = Y_val, prediction = pred_final_classificaton)    # calculate MCC
+table(Truth = Y_val_factor, Prediction = pred_final_classificaton)                                      # print table
+mcc_predictionModel_classification <- calc_mcc(truth = Y_val_factor, prediction = pred_final_classificaton)    # calculate MCC
 names(mcc_predictionModel_classification) <- "MCC finalModel classification"
 # MCC for final model trained for classification
 mcc_predictionModel_classification
